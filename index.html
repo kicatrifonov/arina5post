@@ -2,26 +2,128 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Pac-Man Custom</title>
     <style>
+        /* Глобальный сброс и фон */
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             background: #000;
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
+            min-height: 100vh;
             font-family: Arial, sans-serif;
+            touch-action: none; /* предотвращает прокрутку и жесты */
+            user-select: none;
         }
-        canvas {
-            border: 2px solid #444;
+
+        /* Контейнер для игры */
+        #game-wrapper {
+            position: relative;
+            width: 100%;
+            max-width: 650px; /* максимальная ширина для больших экранов */
+            aspect-ratio: 630 / 750; /* соотношение ширины к высоте (с учётом панели) */
+            background: #000;
+            touch-action: none;
+        }
+
+        /* Канвас — занимает всю площадь контейнера */
+        #gameCanvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            touch-action: none;
             image-rendering: pixelated;
+        }
+
+        /* Сенсорные кнопки (поверх канваса) */
+        #controls {
+            position: absolute;
+            bottom: 15px;
+            left: 0;
+            right: 0;
+            height: 120px;
+            pointer-events: none; /* контейнер не перехватывает */
+            touch-action: none;
+        }
+
+        .ctrl-btn {
+            position: absolute;
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.25);
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            color: white;
+            font-size: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto;
+            touch-action: none;
+            user-select: none;
+            transition: background 0.1s;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.5);
+        }
+        .ctrl-btn:active {
+            background: rgba(255, 255, 255, 0.5);
+        }
+
+        #btn-up {
+            bottom: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        #btn-down {
+            bottom: 0px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        #btn-left {
+            bottom: 35px;
+            left: 10px;
+        }
+        #btn-right {
+            bottom: 35px;
+            right: 10px;
+        }
+
+        /* Инструкция для мобильных */
+        #hint {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255,255,255,0.3);
+            font-size: 14px;
+            white-space: nowrap;
+            pointer-events: none;
+            z-index: 5;
+            display: none; /* скрыта по умолчанию, покажем только на мобильных через медиа */
+        }
+        @media (pointer: coarse) {
+            #hint { display: block; }
         }
     </style>
 </head>
 <body>
-<canvas id="gameCanvas"></canvas>
+
+<div id="game-wrapper">
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="hint">👆 свайп по полю или кнопки</div>
+
+    <!-- Крестовина -->
+    <div id="controls">
+        <div class="ctrl-btn" id="btn-up">▲</div>
+        <div class="ctrl-btn" id="btn-down">▼</div>
+        <div class="ctrl-btn" id="btn-left">◄</div>
+        <div class="ctrl-btn" id="btn-right">►</div>
+    </div>
+</div>
+
 <script>
 // ============================================================
 //  КОНСТАНТЫ
@@ -64,14 +166,12 @@ class Enemy {
         if (this.moveCounter % 2 !== 0) return;
 
         const dirs = [[-1,0], [1,0], [0,-1], [0,1]];
-        // Перемешиваем
         for (let i = dirs.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [dirs[i], dirs[j]] = [dirs[j], dirs[i]];
         }
 
         let chosenDir = null;
-        // 20% шанс пойти к игроку
         if (Math.random() < 0.2) {
             let bestDist = Infinity;
             for (const [dr, dc] of dirs) {
@@ -86,7 +186,6 @@ class Enemy {
             }
         }
 
-        // Если не выбрано направление к игроку — берём первое доступное случайное
         if (!chosenDir) {
             for (const [dr, dc] of dirs) {
                 const nr = this.r + dr, nc = this.c + dc;
@@ -112,9 +211,11 @@ class Enemy {
 class Game {
     constructor() {
         this.canvas = document.getElementById('gameCanvas');
+        this.ctx = this.canvas.getContext('2d');
+
+        // Размер канваса в пикселях (внутренний)
         this.canvas.width = SCREEN_WIDTH;
         this.canvas.height = SCREEN_HEIGHT;
-        this.ctx = this.canvas.getContext('2d');
 
         this.font = '24px Arial';
         this.playerImg = null;
@@ -122,18 +223,28 @@ class Game {
         this.imagesLoaded = 0;
         this.totalImages = 2;
 
-        // Загружаем изображения
         this.loadImages();
 
-        // Состояние игры
         this.resetGame();
 
-        // Запуск цикла
+        // Цикл игры
         this.lastUpdate = 0;
         this.updateInterval = 140; // мс (~7 кадров/с)
         this.running = true;
         this.loop = this.loop.bind(this);
         requestAnimationFrame(this.loop);
+
+        // Управление с клавиатуры
+        window.addEventListener('keydown', (e) => this.handleKey(e));
+        // Блокируем скролл стрелками
+        window.addEventListener('keydown', (e) => {
+            if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','w','W','s','S','a','A','d','D'].includes(e.key)) {
+                e.preventDefault();
+            }
+        });
+
+        // Сенсорное управление
+        this.setupTouchControls();
     }
 
     loadImages() {
@@ -163,10 +274,8 @@ class Game {
 
     generateLevel() {
         this.level++;
-        // Сетка: 1 - стена, 0 - проход
         this.grid = Array.from({ length: ROWS }, () => Array(COLS).fill(1));
 
-        // Рекурсивный бэктрекинг
         const carve = (r, c) => {
             this.grid[r][c] = 0;
             const dirs = [[0,2], [0,-2], [2,0], [-2,0]];
@@ -184,7 +293,6 @@ class Game {
         };
         carve(1, 1);
 
-        // Удаляем дополнительные стены
         let extra = 0;
         const targetExtra = Math.floor(ROWS * COLS / 20);
         while (extra < targetExtra) {
@@ -196,7 +304,6 @@ class Game {
             }
         }
 
-        // Еда (все проходы)
         this.food = [];
         for (let r = 0; r < ROWS; r++) {
             for (let c = 0; c < COLS; c++) {
@@ -204,15 +311,12 @@ class Game {
             }
         }
 
-        // Старт игрока (центр)
         this.playerPos = [Math.floor(ROWS/2), Math.floor(COLS/2)];
         const playerIdx = this.food.findIndex(([r,c]) => r === this.playerPos[0] && c === this.playerPos[1]);
         if (playerIdx !== -1) this.food.splice(playerIdx, 1);
 
-        // Враги (4 штуки по углам)
         this.enemies = [];
         const startPositions = [[1,1], [1, COLS-2], [ROWS-2, 1], [ROWS-2, COLS-2]];
-        // Перемешиваем
         for (let i = startPositions.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [startPositions[i], startPositions[j]] = [startPositions[j], startPositions[i]];
@@ -221,7 +325,6 @@ class Game {
             if (this.grid[r][c] === 0 && !(r === this.playerPos[0] && c === this.playerPos[1])) {
                 this.enemies.push(new Enemy(r, c));
             } else {
-                // ищем свободную
                 for (let rr = 0; rr < ROWS; rr++) {
                     let found = false;
                     for (let cc = 0; cc < COLS; cc++) {
@@ -236,7 +339,6 @@ class Game {
             }
         }
 
-        // Убираем еду с позиций врагов
         for (const enemy of this.enemies) {
             const idx = this.food.findIndex(([r,c]) => r === enemy.r && c === enemy.c);
             if (idx !== -1) this.food.splice(idx, 1);
@@ -245,25 +347,98 @@ class Game {
         this.totalFood = this.food.length;
     }
 
+    // ============================================================
+    //  УПРАВЛЕНИЕ
+    // ============================================================
+    setDirection(dr, dc) {
+        this.playerDir = [dr, dc];
+    }
+
     handleKey(e) {
         const key = e.key;
         if (key === 'ArrowUp' || key === 'w' || key === 'W') {
-            this.playerDir = [-1, 0];
+            this.setDirection(-1, 0);
             e.preventDefault();
         } else if (key === 'ArrowDown' || key === 's' || key === 'S') {
-            this.playerDir = [1, 0];
+            this.setDirection(1, 0);
             e.preventDefault();
         } else if (key === 'ArrowLeft' || key === 'a' || key === 'A') {
-            this.playerDir = [0, -1];
+            this.setDirection(0, -1);
             e.preventDefault();
         } else if (key === 'ArrowRight' || key === 'd' || key === 'D') {
-            this.playerDir = [0, 1];
+            this.setDirection(0, 1);
             e.preventDefault();
         }
     }
 
+    setupTouchControls() {
+        // Кнопки
+        const btnUp = document.getElementById('btn-up');
+        const btnDown = document.getElementById('btn-down');
+        const btnLeft = document.getElementById('btn-left');
+        const btnRight = document.getElementById('btn-right');
+
+        const bindBtn = (btn, dr, dc) => {
+            btn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                this.setDirection(dr, dc);
+            });
+            // Также для мыши (для отладки на десктопе)
+            btn.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                this.setDirection(dr, dc);
+            });
+        };
+        bindBtn(btnUp, -1, 0);
+        bindBtn(btnDown, 1, 0);
+        bindBtn(btnLeft, 0, -1);
+        bindBtn(btnRight, 0, 1);
+
+        // Свайпы по канвасу
+        let touchStartX = 0, touchStartY = 0;
+        const canvas = this.canvas;
+        canvas.addEventListener('touchstart', (e) => {
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            touchStartX = (touch.clientX - rect.left) * scaleX;
+            touchStartY = (touch.clientY - rect.top) * scaleY;
+        }, { passive: false });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (e.touches.length === 0) return;
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (touch.clientX - rect.left) * scaleX;
+            const y = (touch.clientY - rect.top) * scaleY;
+            const dx = x - touchStartX;
+            const dy = y - touchStartY;
+            const threshold = 30;
+            if (Math.abs(dx) > threshold || Math.abs(dy) > threshold) {
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    this.setDirection(0, dx > 0 ? 1 : -1);
+                } else {
+                    this.setDirection(dy > 0 ? 1 : -1, 0);
+                }
+                // Сбрасываем начальную точку, чтобы не срабатывало постоянно
+                touchStartX = x;
+                touchStartY = y;
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', (e) => {
+            // Можно оставить последнее направление, ничего не меняем
+        });
+    }
+
+    // ============================================================
+    //  ИГРОВАЯ ЛОГИКА
+    // ============================================================
     update() {
-        // Движение игрока
         const [dr, dc] = this.playerDir;
         const newR = this.playerPos[0] + dr;
         const newC = this.playerPos[1] + dc;
@@ -271,19 +446,16 @@ class Game {
             this.playerPos = [newR, newC];
         }
 
-        // Сбор еды
         const idx = this.food.findIndex(([r,c]) => r === this.playerPos[0] && c === this.playerPos[1]);
         if (idx !== -1) {
             this.food.splice(idx, 1);
             this.score++;
         }
 
-        // Движение врагов
         for (const enemy of this.enemies) {
             enemy.move(this.grid, this.playerPos);
         }
 
-        // Столкновения
         for (const enemy of this.enemies) {
             if (enemy.r === this.playerPos[0] && enemy.c === this.playerPos[1]) {
                 this.lives--;
@@ -296,7 +468,6 @@ class Game {
             }
         }
 
-        // Проверка окончания уровня
         if (this.food.length === 0) {
             this.generateLevel();
         }
@@ -320,7 +491,6 @@ class Game {
 
     gameOver() {
         this.running = false;
-        // Показываем сообщение
         const ctx = this.ctx;
         ctx.fillStyle = COLORS.BLACK;
         ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -334,13 +504,15 @@ class Game {
         ctx.fillText('Обновите страницу, чтобы начать заново', SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 40);
     }
 
+    // ============================================================
+    //  ОТРИСОВКА
+    // ============================================================
     draw() {
         const ctx = this.ctx;
-        // Очистка
         ctx.fillStyle = COLORS.BLACK;
         ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
 
-        // Панель сверху (чёрная, но рисуем текст)
+        // Панель
         ctx.fillStyle = COLORS.BLACK;
         ctx.fillRect(0, 0, SCREEN_WIDTH, PANEL_HEIGHT);
         ctx.font = this.font;
@@ -363,7 +535,7 @@ class Game {
             }
         }
 
-        // Еда (зелёные круги)
+        // Еда
         ctx.fillStyle = COLORS.GREEN;
         for (const [r, c] of this.food) {
             const cx = c * CELL_SIZE + CELL_SIZE/2;
@@ -398,13 +570,10 @@ class Game {
                 ctx.fill();
             }
         }
-
-        // Если игра завершена, поверх рисуем GAME OVER (уже сделано в gameOver)
     }
 
     loop(timestamp) {
         if (!this.running) {
-            // продолжаем рисовать, но не обновляем
             this.draw();
             requestAnimationFrame(this.loop);
             return;
@@ -423,14 +592,7 @@ class Game {
 //  ЗАПУСК
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
-    const game = new Game();
-    window.addEventListener('keydown', (e) => game.handleKey(e));
-    // Предотвращаем скроллинг при стрелках
-    window.addEventListener('keydown', (e) => {
-        if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','w','W','s','S','a','A','d','D'].includes(e.key)) {
-            e.preventDefault();
-        }
-    });
+    new Game();
 });
 </script>
 </body>
