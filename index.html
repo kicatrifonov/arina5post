@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Pac-Man Custom</title>
     <style>
-        /* Глобальный сброс и фон */
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             background: #000;
@@ -14,21 +13,19 @@
             align-items: center;
             min-height: 100vh;
             font-family: Arial, sans-serif;
-            touch-action: none; /* предотвращает прокрутку и жесты */
+            touch-action: none;
             user-select: none;
         }
 
-        /* Контейнер для игры */
         #game-wrapper {
             position: relative;
             width: 100%;
-            max-width: 650px; /* максимальная ширина для больших экранов */
-            aspect-ratio: 630 / 750; /* соотношение ширины к высоте (с учётом панели) */
+            max-width: 650px;
+            aspect-ratio: 630 / 750;
             background: #000;
             touch-action: none;
         }
 
-        /* Канвас — занимает всю площадь контейнера */
         #gameCanvas {
             display: block;
             width: 100%;
@@ -38,59 +35,7 @@
             image-rendering: pixelated;
         }
 
-        /* Сенсорные кнопки (поверх канваса) */
-        #controls {
-            position: absolute;
-            bottom: 15px;
-            left: 0;
-            right: 0;
-            height: 120px;
-            pointer-events: none; /* контейнер не перехватывает */
-            touch-action: none;
-        }
-
-        .ctrl-btn {
-            position: absolute;
-            width: 70px;
-            height: 70px;
-            border-radius: 50%;
-            background: rgba(255, 255, 255, 0.25);
-            border: 2px solid rgba(255, 255, 255, 0.5);
-            color: white;
-            font-size: 32px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            pointer-events: auto;
-            touch-action: none;
-            user-select: none;
-            transition: background 0.1s;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.5);
-        }
-        .ctrl-btn:active {
-            background: rgba(255, 255, 255, 0.5);
-        }
-
-        #btn-up {
-            bottom: 70px;
-            left: 50%;
-            transform: translateX(-50%);
-        }
-        #btn-down {
-            bottom: 0px;
-            left: 50%;
-            transform: translateX(-50%);
-        }
-        #btn-left {
-            bottom: 35px;
-            left: 10px;
-        }
-        #btn-right {
-            bottom: 35px;
-            right: 10px;
-        }
-
-        /* Инструкция для мобильных */
+        /* Подсказка для свайпов */
         #hint {
             position: absolute;
             top: 10px;
@@ -101,7 +46,7 @@
             white-space: nowrap;
             pointer-events: none;
             z-index: 5;
-            display: none; /* скрыта по умолчанию, покажем только на мобильных через медиа */
+            display: none;
         }
         @media (pointer: coarse) {
             #hint { display: block; }
@@ -112,16 +57,7 @@
 
 <div id="game-wrapper">
     <canvas id="gameCanvas"></canvas>
-
-    <div id="hint">👆 свайп по полю или кнопки</div>
-
-    <!-- Крестовина -->
-    <div id="controls">
-        <div class="ctrl-btn" id="btn-up">▲</div>
-        <div class="ctrl-btn" id="btn-down">▼</div>
-        <div class="ctrl-btn" id="btn-left">◄</div>
-        <div class="ctrl-btn" id="btn-right">►</div>
-    </div>
+    <div id="hint">👆 свайп по полю для управления</div>
 </div>
 
 <script>
@@ -213,7 +149,6 @@ class Game {
         this.canvas = document.getElementById('gameCanvas');
         this.ctx = this.canvas.getContext('2d');
 
-        // Размер канваса в пикселях (внутренний)
         this.canvas.width = SCREEN_WIDTH;
         this.canvas.height = SCREEN_HEIGHT;
 
@@ -227,24 +162,22 @@ class Game {
 
         this.resetGame();
 
-        // Цикл игры
         this.lastUpdate = 0;
         this.updateInterval = 140; // мс (~7 кадров/с)
         this.running = true;
         this.loop = this.loop.bind(this);
         requestAnimationFrame(this.loop);
 
-        // Управление с клавиатуры
+        // Клавиатура
         window.addEventListener('keydown', (e) => this.handleKey(e));
-        // Блокируем скролл стрелками
         window.addEventListener('keydown', (e) => {
             if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','w','W','s','S','a','A','d','D'].includes(e.key)) {
                 e.preventDefault();
             }
         });
 
-        // Сенсорное управление
-        this.setupTouchControls();
+        // Свайпы
+        this.setupSwipeControls();
     }
 
     loadImages() {
@@ -371,32 +304,10 @@ class Game {
         }
     }
 
-    setupTouchControls() {
-        // Кнопки
-        const btnUp = document.getElementById('btn-up');
-        const btnDown = document.getElementById('btn-down');
-        const btnLeft = document.getElementById('btn-left');
-        const btnRight = document.getElementById('btn-right');
-
-        const bindBtn = (btn, dr, dc) => {
-            btn.addEventListener('touchstart', (e) => {
-                e.preventDefault();
-                this.setDirection(dr, dc);
-            });
-            // Также для мыши (для отладки на десктопе)
-            btn.addEventListener('mousedown', (e) => {
-                e.preventDefault();
-                this.setDirection(dr, dc);
-            });
-        };
-        bindBtn(btnUp, -1, 0);
-        bindBtn(btnDown, 1, 0);
-        bindBtn(btnLeft, 0, -1);
-        bindBtn(btnRight, 0, 1);
-
-        // Свайпы по канвасу
+    setupSwipeControls() {
         let touchStartX = 0, touchStartY = 0;
         const canvas = this.canvas;
+
         canvas.addEventListener('touchstart', (e) => {
             const touch = e.touches[0];
             const rect = canvas.getBoundingClientRect();
@@ -424,14 +335,13 @@ class Game {
                 } else {
                     this.setDirection(dy > 0 ? 1 : -1, 0);
                 }
-                // Сбрасываем начальную точку, чтобы не срабатывало постоянно
                 touchStartX = x;
                 touchStartY = y;
             }
         }, { passive: false });
 
         canvas.addEventListener('touchend', (e) => {
-            // Можно оставить последнее направление, ничего не меняем
+            // Ничего не делаем
         });
     }
 
