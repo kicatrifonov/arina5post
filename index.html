@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pac-Man Custom</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 2px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<script>
+// ============================================================
+//  КОНСТАНТЫ
+// ============================================================
+const CELL_SIZE = 30;
+const ROWS = 21;
+const COLS = 21;
+const WIDTH = COLS * CELL_SIZE;
+const HEIGHT = ROWS * CELL_SIZE;
+const PANEL_HEIGHT = 60;
+const SCREEN_WIDTH = WIDTH;
+const SCREEN_HEIGHT = HEIGHT + PANEL_HEIGHT;
+
+const COLORS = {
+    BLACK: '#000000',
+    WHITE: '#ffffff',
+    GREEN: '#00ff00',
+    RED: '#ff0000',
+    BLUE: '#0000ff',
+    GRAY: '#666666',
+};
+
+const LIVES = 3;
+const PLAYER_IMAGE_PATH = 'player.png';
+const ENEMY_IMAGE_PATH = 'enemy.png';
+
+// ============================================================
+//  КЛАССЫ
+// ============================================================
+class Enemy {
+    constructor(r, c) {
+        this.r = r;
+        this.c = c;
+        this.dir = [0, 0];
+        this.moveCounter = 0;
+    }
+
+    move(grid, playerPos) {
+        this.moveCounter++;
+        if (this.moveCounter % 2 !== 0) return;
+
+        const dirs = [[-1,0], [1,0], [0,-1], [0,1]];
+        // Перемешиваем
+        for (let i = dirs.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [dirs[i], dirs[j]] = [dirs[j], dirs[i]];
+        }
+
+        let chosenDir = null;
+        // 20% шанс пойти к игроку
+        if (Math.random() < 0.2) {
+            let bestDist = Infinity;
+            for (const [dr, dc] of dirs) {
+                const nr = this.r + dr, nc = this.c + dc;
+                if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS && grid[nr][nc] === 0) {
+                    const dist = Math.abs(nr - playerPos[0]) + Math.abs(nc - playerPos[1]);
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        chosenDir = [dr, dc];
+                    }
+                }
+            }
+        }
+
+        // Если не выбрано направление к игроку — берём первое доступное случайное
+        if (!chosenDir) {
+            for (const [dr, dc] of dirs) {
+                const nr = this.r + dr, nc = this.c + dc;
+                if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS && grid[nr][nc] === 0) {
+                    chosenDir = [dr, dc];
+                    break;
+                }
+            }
+        }
+
+        if (chosenDir) {
+            this.dir = chosenDir;
+            const newR = this.r + this.dir[0];
+            const newC = this.c + this.dir[1];
+            if (newR >= 0 && newR < ROWS && newC >= 0 && newC < COLS && grid[newR][newC] === 0) {
+                this.r = newR;
+                this.c = newC;
+            }
+        }
+    }
+}
+
+class Game {
+    constructor() {
+        this.canvas = document.getElementById('gameCanvas');
+        this.canvas.width = SCREEN_WIDTH;
+        this.canvas.height = SCREEN_HEIGHT;
+        this.ctx = this.canvas.getContext('2d');
+
+        this.font = '24px Arial';
+        this.playerImg = null;
+        this.enemyImg = null;
+        this.imagesLoaded = 0;
+        this.totalImages = 2;
+
+        // Загружаем изображения
+        this.loadImages();
+
+        // Состояние игры
+        this.resetGame();
+
+        // Запуск цикла
+        this.lastUpdate = 0;
+        this.updateInterval = 140; // мс (~7 кадров/с)
+        this.running = true;
+        this.loop = this.loop.bind(this);
+        requestAnimationFrame(this.loop);
+    }
+
+    loadImages() {
+        const load = (src, callback) => {
+            const img = new Image();
+            img.onload = () => { callback(img); };
+            img.onerror = () => { callback(null); };
+            img.src = src;
+        };
+        load(PLAYER_IMAGE_PATH, (img) => {
+            this.playerImg = img;
+            this.imagesLoaded++;
+        });
+        load(ENEMY_IMAGE_PATH, (img) => {
+            this.enemyImg = img;
+            this.imagesLoaded++;
+        });
+    }
+
+    resetGame() {
+        this.lives = LIVES;
+        this.score = 0;
+        this.level = 0;
+        this.playerDir = [0, 0];
+        this.generateLevel();
+    }
+
+    generateLevel() {
+        this.level++;
+        // Сетка: 1 - стена, 0 - проход
+        this.grid = Array.from({ length: ROWS }, () => Array(COLS).fill(1));
+
+        // Рекурсивный бэктрекинг
+        const carve = (r, c) => {
+            this.grid[r][c] = 0;
+            const dirs = [[0,2], [0,-2], [2,0], [-2,0]];
+            for (let i = dirs.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [dirs[i], dirs[j]] = [dirs[j], dirs[i]];
+            }
+            for (const [dr, dc] of dirs) {
+                const nr = r + dr, nc = c + dc;
+                if (nr > 0 && nr < ROWS && nc > 0 && nc < COLS && this.grid[nr][nc] === 1) {
+                    this.grid[r + dr/2][c + dc/2] = 0;
+                    carve(nr, nc);
+                }
+            }
+        };
+        carve(1, 1);
+
+        // Удаляем дополнительные стены
+        let extra = 0;
+        const targetExtra = Math.floor(ROWS * COLS / 20);
+        while (extra < targetExtra) {
+            const r = Math.floor(Math.random() * (ROWS-2)) + 1;
+            const c = Math.floor(Math.random() * (COLS-2)) + 1;
+            if (this.grid[r][c] === 1) {
+                this.grid[r][c] = 0;
+                extra++;
+            }
+        }
+
+        // Еда (все проходы)
+        this.food = [];
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                if (this.grid[r][c] === 0) this.food.push([r, c]);
+            }
+        }
+
+        // Старт игрока (центр)
+        this.playerPos = [Math.floor(ROWS/2), Math.floor(COLS/2)];
+        const playerIdx = this.food.findIndex(([r,c]) => r === this.playerPos[0] && c === this.playerPos[1]);
+        if (playerIdx !== -1) this.food.splice(playerIdx, 1);
+
+        // Враги (4 штуки по углам)
+        this.enemies = [];
+        const startPositions = [[1,1], [1, COLS-2], [ROWS-2, 1], [ROWS-2, COLS-2]];
+        // Перемешиваем
+        for (let i = startPositions.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [startPositions[i], startPositions[j]] = [startPositions[j], startPositions[i]];
+        }
+        for (const [r, c] of startPositions) {
+            if (this.grid[r][c] === 0 && !(r === this.playerPos[0] && c === this.playerPos[1])) {
+                this.enemies.push(new Enemy(r, c));
+            } else {
+                // ищем свободную
+                for (let rr = 0; rr < ROWS; rr++) {
+                    let found = false;
+                    for (let cc = 0; cc < COLS; cc++) {
+                        if (this.grid[rr][cc] === 0 && !(rr === this.playerPos[0] && cc === this.playerPos[1])) {
+                            this.enemies.push(new Enemy(rr, cc));
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (found) break;
+                }
+            }
+        }
+
+        // Убираем еду с позиций врагов
+        for (const enemy of this.enemies) {
+            const idx = this.food.findIndex(([r,c]) => r === enemy.r && c === enemy.c);
+            if (idx !== -1) this.food.splice(idx, 1);
+        }
+
+        this.totalFood = this.food.length;
+    }
+
+    handleKey(e) {
+        const key = e.key;
+        if (key === 'ArrowUp' || key === 'w' || key === 'W') {
+            this.playerDir = [-1, 0];
+            e.preventDefault();
+        } else if (key === 'ArrowDown' || key === 's' || key === 'S') {
+            this.playerDir = [1, 0];
+            e.preventDefault();
+        } else if (key === 'ArrowLeft' || key === 'a' || key === 'A') {
+            this.playerDir = [0, -1];
+            e.preventDefault();
+        } else if (key === 'ArrowRight' || key === 'd' || key === 'D') {
+            this.playerDir = [0, 1];
+            e.preventDefault();
+        }
+    }
+
+    update() {
+        // Движение игрока
+        const [dr, dc] = this.playerDir;
+        const newR = this.playerPos[0] + dr;
+        const newC = this.playerPos[1] + dc;
+        if (newR >= 0 && newR < ROWS && newC >= 0 && newC < COLS && this.grid[newR][newC] === 0) {
+            this.playerPos = [newR, newC];
+        }
+
+        // Сбор еды
+        const idx = this.food.findIndex(([r,c]) => r === this.playerPos[0] && c === this.playerPos[1]);
+        if (idx !== -1) {
+            this.food.splice(idx, 1);
+            this.score++;
+        }
+
+        // Движение врагов
+        for (const enemy of this.enemies) {
+            enemy.move(this.grid, this.playerPos);
+        }
+
+        // Столкновения
+        for (const enemy of this.enemies) {
+            if (enemy.r === this.playerPos[0] && enemy.c === this.playerPos[1]) {
+                this.lives--;
+                if (this.lives <= 0) {
+                    this.gameOver();
+                } else {
+                    this.resetPositions();
+                }
+                return;
+            }
+        }
+
+        // Проверка окончания уровня
+        if (this.food.length === 0) {
+            this.generateLevel();
+        }
+    }
+
+    resetPositions() {
+        this.playerPos = [Math.floor(ROWS/2), Math.floor(COLS/2)];
+        const startPositions = [[1,1], [1, COLS-2], [ROWS-2, 1], [ROWS-2, COLS-2]];
+        for (let i = startPositions.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [startPositions[i], startPositions[j]] = [startPositions[j], startPositions[i]];
+        }
+        for (let i = 0; i < this.enemies.length && i < startPositions.length; i++) {
+            const [r, c] = startPositions[i];
+            if (this.grid[r][c] === 0) {
+                this.enemies[i].r = r;
+                this.enemies[i].c = c;
+            }
+        }
+    }
+
+    gameOver() {
+        this.running = false;
+        // Показываем сообщение
+        const ctx = this.ctx;
+        ctx.fillStyle = COLORS.BLACK;
+        ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+        ctx.fillStyle = COLORS.RED;
+        ctx.font = 'bold 40px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`GAME OVER!  Score: ${this.score}`, SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 20);
+        ctx.fillStyle = COLORS.WHITE;
+        ctx.font = '20px Arial';
+        ctx.fillText('Обновите страницу, чтобы начать заново', SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 40);
+    }
+
+    draw() {
+        const ctx = this.ctx;
+        // Очистка
+        ctx.fillStyle = COLORS.BLACK;
+        ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+
+        // Панель сверху (чёрная, но рисуем текст)
+        ctx.fillStyle = COLORS.BLACK;
+        ctx.fillRect(0, 0, SCREEN_WIDTH, PANEL_HEIGHT);
+        ctx.font = this.font;
+        ctx.fillStyle = COLORS.WHITE;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillText(`Score: ${this.score}`, 10, 10);
+        ctx.textAlign = 'right';
+        ctx.fillText(`Lives: ${this.lives}`, SCREEN_WIDTH - 10, 10);
+        ctx.textAlign = 'center';
+        ctx.fillText(`Level: ${this.level}`, SCREEN_WIDTH/2, 10);
+
+        // Лабиринт
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                if (this.grid[r][c] === 1) {
+                    ctx.fillStyle = COLORS.WHITE;
+                    ctx.fillRect(c * CELL_SIZE, r * CELL_SIZE + PANEL_HEIGHT, CELL_SIZE, CELL_SIZE);
+                }
+            }
+        }
+
+        // Еда (зелёные круги)
+        ctx.fillStyle = COLORS.GREEN;
+        for (const [r, c] of this.food) {
+            const cx = c * CELL_SIZE + CELL_SIZE/2;
+            const cy = r * CELL_SIZE + PANEL_HEIGHT + CELL_SIZE/2;
+            ctx.beginPath();
+            ctx.arc(cx, cy, 4, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+
+        // Игрок
+        const px = this.playerPos[1] * CELL_SIZE;
+        const py = this.playerPos[0] * CELL_SIZE + PANEL_HEIGHT;
+        if (this.playerImg && this.playerImg.complete && this.playerImg.naturalWidth > 0) {
+            ctx.drawImage(this.playerImg, px, py, CELL_SIZE, CELL_SIZE);
+        } else {
+            ctx.fillStyle = COLORS.BLUE;
+            ctx.beginPath();
+            ctx.arc(px + CELL_SIZE/2, py + CELL_SIZE/2, CELL_SIZE/2 - 2, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+
+        // Враги
+        for (const enemy of this.enemies) {
+            const ex = enemy.c * CELL_SIZE;
+            const ey = enemy.r * CELL_SIZE + PANEL_HEIGHT;
+            if (this.enemyImg && this.enemyImg.complete && this.enemyImg.naturalWidth > 0) {
+                ctx.drawImage(this.enemyImg, ex, ey, CELL_SIZE, CELL_SIZE);
+            } else {
+                ctx.fillStyle = COLORS.RED;
+                ctx.beginPath();
+                ctx.arc(ex + CELL_SIZE/2, ey + CELL_SIZE/2, CELL_SIZE/2 - 2, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+        }
+
+        // Если игра завершена, поверх рисуем GAME OVER (уже сделано в gameOver)
+    }
+
+    loop(timestamp) {
+        if (!this.running) {
+            // продолжаем рисовать, но не обновляем
+            this.draw();
+            requestAnimationFrame(this.loop);
+            return;
+        }
+
+        if (timestamp - this.lastUpdate >= this.updateInterval) {
+            this.update();
+            this.lastUpdate = timestamp;
+        }
+        this.draw();
+        requestAnimationFrame(this.loop);
+    }
+}
+
+// ============================================================
+//  ЗАПУСК
+// ============================================================
+document.addEventListener('DOMContentLoaded', () => {
+    const game = new Game();
+    window.addEventListener('keydown', (e) => game.handleKey(e));
+    // Предотвращаем скроллинг при стрелках
+    window.addEventListener('keydown', (e) => {
+        if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','w','W','s','S','a','A','d','D'].includes(e.key)) {
+            e.preventDefault();
+        }
+    });
+});
+</script>
+</body>
+</html>
